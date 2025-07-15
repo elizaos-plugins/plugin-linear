@@ -1,23 +1,45 @@
-import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
-  logger,
-} from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
-export const listLinearTeamsAction: Action = {
+export const listTeamsAction: Action = {
   name: 'LIST_LINEAR_TEAMS',
-  description: 'List all teams in the Linear workspace',
-  similes: ['show teams', 'get teams', 'list teams', 'view teams'],
+  description: 'List all teams in Linear',
+  similes: ['list-linear-teams', 'show-linear-teams', 'get-linear-teams'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Show me all teams'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll list all the teams in Linear for you.',
+        actions: ['LIST_LINEAR_TEAMS']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'What teams are available?'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'Let me show you all the available teams.',
+        actions: ['LIST_LINEAR_TEAMS']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -25,9 +47,9 @@ export const listLinearTeamsAction: Action = {
   
   async handler(
     runtime: IAgentRuntime,
-    message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _message: Memory,
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -37,40 +59,39 @@ export const listLinearTeamsAction: Action = {
       
       const teams = await linearService.getTeams();
       
-      const teamsData = teams.map((team: any) => ({
-        id: team.id,
-        name: team.name,
-        key: team.key,
-        description: team.description,
-      }));
+      if (teams.length === 0) {
+        return {
+          text: 'No teams found in Linear.',
+          success: true,
+          data: {
+            teams: []
+          }
+        };
+      }
       
-      logger.info(`Retrieved ${teams.length} Linear teams`);
+      const teamList = teams.map((team, index) => 
+        `${index + 1}. ${team.name} (${team.key})${team.description ? ` - ${team.description}` : ''}`
+      ).join('\n');
       
       return {
+        text: `Found ${teams.length} team${teams.length === 1 ? '' : 's'}:\n${teamList}`,
         success: true,
         data: {
-          teams: teamsData,
-          count: teams.length,
-        },
-        metadata: {
-          teamCount: teams.length,
-        },
+          teams: teams.map(t => ({
+            id: t.id,
+            name: t.name,
+            key: t.key,
+            description: t.description
+          })),
+          count: teams.length
+        }
       };
-      
     } catch (error) {
-      logger.error('Failed to list Linear teams:', error);
+      logger.error('Failed to list teams:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list teams',
+        text: `Failed to list teams: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Show me all teams',
-      output: 'Found 3 teams:\n1. Engineering (ENG)\n2. Design (DES)\n3. Product (PROD)',
-      explanation: 'Lists all teams in the workspace',
-    },
-  ] as ActionExample[],
+  }
 }; 

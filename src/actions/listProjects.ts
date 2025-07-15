@@ -1,23 +1,45 @@
-import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
-  logger,
-} from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
-export const listLinearProjectsAction: Action = {
+export const listProjectsAction: Action = {
   name: 'LIST_LINEAR_PROJECTS',
-  description: 'List projects in Linear, optionally filtered by team',
-  similes: ['show projects', 'get projects', 'list projects', 'view projects'],
+  description: 'List all projects in Linear',
+  similes: ['list-linear-projects', 'show-linear-projects', 'get-linear-projects'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Show me all projects'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll list all the projects in Linear for you.',
+        actions: ['LIST_LINEAR_PROJECTS']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'What projects do we have?'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'Let me show you all the available projects.',
+        actions: ['LIST_LINEAR_PROJECTS']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -25,9 +47,9 @@ export const listLinearProjectsAction: Action = {
   
   async handler(
     runtime: IAgentRuntime,
-    message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _message: Memory,
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -35,52 +57,63 @@ export const listLinearProjectsAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      const teamId = options?.teamId ? String(options.teamId) : undefined;
-      const projects = await linearService.getProjects(teamId);
+      const projects = await linearService.getProjects();
       
-      const projectsData = await Promise.all(
-        projects.map(async (project: any) => {
-          const team = await project.team;
+      if (projects.length === 0) {
+        return {
+          text: 'No projects found in Linear.',
+          success: true,
+          data: {
+            projects: []
+          }
+        };
+      }
+      
+      // Get teams for each project
+      const projectsWithDetails = await Promise.all(
+        projects.map(async (project) => {
+          const teamsQuery = await project.teams();
+          const teams = await teamsQuery.nodes;
           return {
-            id: project.id,
-            name: project.name,
-            description: project.description,
-            state: project.state,
-            teamName: team?.name,
-            startDate: project.startDate,
-            targetDate: project.targetDate,
+            ...project,
+            teamsList: teams
           };
         })
       );
       
-      logger.info(`Retrieved ${projects.length} Linear projects`);
+      const projectList = projectsWithDetails.map((project, index) => {
+        const teamNames = project.teamsList.map((t: any) => t.name).join(', ') || 'No teams';
+        return `${index + 1}. ${project.name}${project.description ? ` - ${project.description}` : ''} (Teams: ${teamNames})`;
+      }).join('\n');
       
       return {
+        text: `Found ${projects.length} project${projects.length === 1 ? '' : 's'}:\n${projectList}`,
         success: true,
         data: {
-          projects: projectsData,
-          count: projects.length,
-        },
-        metadata: {
-          projectCount: projects.length,
-          teamFilter: teamId,
-        },
+          projects: projectsWithDetails.map(p => ({
+            id: p.id,
+            name: p.name,
+            description: p.description,
+            url: p.url,
+            teams: p.teamsList.map((t: any) => ({
+              id: t.id,
+              name: t.name,
+              key: t.key
+            })),
+            state: p.state,
+            progress: p.progress,
+            startDate: p.startDate,
+            targetDate: p.targetDate
+          })),
+          count: projects.length
+        }
       };
-      
     } catch (error) {
-      logger.error('Failed to list Linear projects:', error);
+      logger.error('Failed to list projects:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to list projects',
+        text: `Failed to list projects: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Show me all projects',
-      output: 'Found 5 projects:\n1. Q1 2024 Roadmap\n2. Mobile App Redesign\n3. API v2 Migration...',
-      explanation: 'Lists all projects in the workspace',
-    },
-  ] as ActionExample[],
+  }
 }; 

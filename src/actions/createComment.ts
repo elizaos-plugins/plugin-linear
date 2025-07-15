@@ -1,24 +1,45 @@
-import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
-  logger,
-} from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, ActionExample, logger } from '@elizaos/core';
 import { LinearService } from '../services/linear';
-import type { LinearCommentInput } from '../types';
 
-export const createLinearCommentAction: Action = {
+export const createCommentAction: Action = {
   name: 'CREATE_LINEAR_COMMENT',
-  description: 'Add a comment to a Linear issue',
-  similes: ['comment on issue', 'add comment', 'reply to issue'],
+  description: 'Create a comment on a Linear issue',
+  similes: ['create-linear-comment', 'add-linear-comment', 'comment-on-linear-issue'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Comment on ENG-123: This has been fixed in the latest release'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll add that comment to issue ENG-123.',
+        actions: ['CREATE_LINEAR_COMMENT']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'Add a comment to BUG-456: Need more information from the reporter'
+      }
+    },
+    {
+      name: 'Assistant', 
+      content: {
+        text: 'I\'ll post that comment on BUG-456 right away.',
+        actions: ['CREATE_LINEAR_COMMENT']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -27,8 +48,8 @@ export const createLinearCommentAction: Action = {
   async handler(
     runtime: IAgentRuntime,
     message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -36,54 +57,47 @@ export const createLinearCommentAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      const issueId = options?.issueId ? String(options.issueId) : undefined;
-      const body = options?.body ? String(options.body) : message.content.text;
-      
-      if (!issueId || !body) {
+      const content = message.content.text;
+      if (!content) {
         return {
-          success: false,
-          error: 'Issue ID and comment body are required',
+          text: 'Please provide a message with the issue ID and comment content.',
+          success: false
         };
       }
       
-      const commentInput: LinearCommentInput = {
-        issueId,
-        body,
-      };
+      const issueMatch = content.match(/(?:comment on|add.*comment.*to)\s+(\w+-\d+):?\s*(.*)/i);
       
-      const comment = await linearService.createComment(commentInput);
+      if (!issueMatch) {
+        return {
+          text: 'Please specify the issue ID and comment content. Example: "Comment on ENG-123: This looks good"',
+          success: false
+        };
+      }
       
-      logger.info(`Created comment on Linear issue: ${issueId}`);
+      const [, issueIdentifier, commentBody] = issueMatch;
+      
+      // Find the issue first to get its ID
+      const issue = await linearService.getIssue(issueIdentifier);
+      
+      const comment = await linearService.createComment({
+        issueId: issue.id,
+        body: commentBody.trim()
+      });
       
       return {
+        text: `Comment added to issue ${issueIdentifier}: "${commentBody.trim()}"`,
         success: true,
         data: {
-          comment: {
-            id: comment.id,
-            body: comment.body,
-            createdAt: comment.createdAt,
-          },
-        },
-        metadata: {
           commentId: comment.id,
-          issueId: issueId,
-        },
+          issueId: issue.id
+        }
       };
-      
     } catch (error) {
-      logger.error('Failed to create Linear comment:', error);
+      logger.error('Failed to create comment:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create comment',
+        text: `Failed to create comment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Comment on ENG-123: This has been fixed in the latest release',
-      output: 'Added comment to issue ENG-123',
-      explanation: 'Adds a comment to an existing issue',
-    },
-  ] as ActionExample[],
+  }
 }; 

@@ -1,23 +1,45 @@
-import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
-  logger,
-} from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, ActionExample, logger } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
-export const clearLinearActivityAction: Action = {
+export const clearActivityAction: Action = {
   name: 'CLEAR_LINEAR_ACTIVITY',
   description: 'Clear the Linear activity log',
-  similes: ['clear activity', 'reset activity', 'delete activity log'],
+  similes: ['clear-linear-activity', 'reset-linear-activity', 'delete-linear-activity'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Clear the Linear activity log'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll clear the Linear activity log for you.',
+        actions: ['CLEAR_LINEAR_ACTIVITY']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'Reset Linear activity'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll reset the Linear activity log now.',
+        actions: ['CLEAR_LINEAR_ACTIVITY']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -26,8 +48,8 @@ export const clearLinearActivityAction: Action = {
   async handler(
     runtime: IAgentRuntime,
     message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -35,31 +57,18 @@ export const clearLinearActivityAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      linearService.clearActivityLog();
-      
-      logger.info('Cleared Linear activity log');
+      await linearService.clearActivityLog();
       
       return {
-        success: true,
-        data: {
-          message: 'Activity log cleared successfully',
-        },
+        text: 'Linear activity log has been cleared.',
+        success: true
       };
-      
     } catch (error) {
       logger.error('Failed to clear Linear activity:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to clear activity',
+        text: `Failed to clear Linear activity: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Clear the Linear activity log',
-      output: 'Linear activity log has been cleared',
-      explanation: 'Clears all stored activity history',
-    },
-  ] as ActionExample[],
+  }
 }; 

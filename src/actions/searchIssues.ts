@@ -1,53 +1,72 @@
 import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
+  Action,
+  ActionResult,
+  IAgentRuntime,
+  Memory,
+  State,
+  ModelType,
   logger,
 } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 import type { LinearSearchFilters } from '../types';
 
-const searchIssuesTemplate = `Extract search criteria from the user's request to search Linear issues.
+const searchTemplate = `Extract search criteria from the user's request for Linear issues.
 
-Recent conversation:
-{{recentMessages}}
+User request: "{{userMessage}}"
 
-Extract search filters like:
-- query: Text to search in title/description
-- state: Issue states (todo, in-progress, done, canceled)
-- assignee: Assignee names or IDs
-- label: Label names
-- priority: Priority levels (1=Urgent, 2=High, 3=Normal, 4=Low)
-- team: Team name or ID
-- project: Project name or ID
-
-Response format should be a valid JSON block:
-\`\`\`json
+Extract and return a JSON object with these possible filters:
 {
-  "query": "search text or null",
-  "state": ["state1", "state2"] or null,
-  "assignee": ["assignee"] or null,
-  "label": ["label1", "label2"] or null,
-  "priority": [1, 2] or null,
-  "team": "team-name" or null,
-  "project": "project-name" or null,
-  "limit": 20
+  "query": "general search text",
+  "state": "filter by state name (e.g., 'In Progress', 'Done', 'Todo')",
+  "assignee": "filter by assignee name or email",
+  "priority": "filter by priority (1=urgent, 2=high, 3=normal, 4=low)",
+  "team": "filter by team name or key",
+  "label": "filter by label name",
+  "hasAssignee": true/false - whether issue should have an assignee,
+  "limit": number of results to return (default 10)
 }
-\`\`\`
-`;
 
-export const searchLinearIssuesAction: Action = {
+Only include fields that are mentioned. Return only the JSON object.`;
+
+export const searchIssuesAction: Action = {
   name: 'SEARCH_LINEAR_ISSUES',
-  description: 'Search for issues in Linear based on various criteria',
-  similes: ['search issues', 'find issues', 'list issues', 'show issues', 'query issues', 'filter issues'],
+  description: 'Search for issues in Linear with various filters',
+  similes: ['search-linear-issues', 'find-linear-issues', 'query-linear-issues'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Show me all open bugs'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll search for all open bug issues in Linear.',
+        actions: ['SEARCH_LINEAR_ISSUES']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'Find high priority issues assigned to me'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll search for high priority issues assigned to you.',
+        actions: ['SEARCH_LINEAR_ISSUES']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -56,8 +75,8 @@ export const searchLinearIssuesAction: Action = {
   async handler(
     runtime: IAgentRuntime,
     message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -65,101 +84,103 @@ export const searchLinearIssuesAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      let filters: LinearSearchFilters;
-      
-      // If we have explicit parameters, use them
-      if (options && Object.keys(options).length > 0) {
-        filters = {
-          query: options.query ? String(options.query) : undefined,
-          state: options.state as string[] | undefined,
-          assignee: options.assignee as string[] | undefined,
-          label: options.label as string[] | undefined,
-          priority: options.priority as number[] | undefined,
-          team: options.team ? String(options.team) : undefined,
-          project: options.project ? String(options.project) : undefined,
-          limit: options.limit ? Number(options.limit) : 20,
+      const content = message.content.text;
+      if (!content) {
+        return {
+          text: 'Please provide search criteria for issues.',
+          success: false
         };
+      }
+      
+      let filters: LinearSearchFilters = {};
+      
+      // Check if we have explicit filters in options
+      if (_options?.filters) {
+        filters = _options.filters as LinearSearchFilters;
       } else {
-        // Use LLM to extract search criteria
-        const response = await runtime.generateText({
-          messages: state.messages || [],
-          context: searchIssuesTemplate,
+        // Use LLM to extract search filters
+        const prompt = searchTemplate.replace('{{userMessage}}', content);
+        
+        const response = await runtime.useModel(ModelType.TEXT_LARGE, {
+          prompt: prompt
         });
         
-        filters = JSON.parse(response.trim().replace(/```json\n?|\n?```/g, ''));
+        if (!response) {
+          // Fallback to simple keyword search
+          filters = { query: content };
+        } else {
+          try {
+            const parsed = JSON.parse(response);
+            filters = {
+              query: parsed.query,
+              state: parsed.state ? [parsed.state] : undefined,
+              assignee: parsed.assignee ? [parsed.assignee] : undefined,
+              priority: parsed.priority ? [parsed.priority] : undefined,
+              team: parsed.team,
+              label: parsed.label ? [parsed.label] : undefined,
+              limit: parsed.limit
+            };
+            
+            // Clean up undefined values
+            Object.keys(filters).forEach(key => {
+              if (filters[key as keyof LinearSearchFilters] === undefined) {
+                delete filters[key as keyof LinearSearchFilters];
+              }
+            });
+          } catch (parseError) {
+            logger.error('Failed to parse search filters:', parseError);
+            // Fallback to simple search
+            filters = { query: content };
+          }
+        }
       }
       
-      // Set default limit if not provided
-      if (!filters.limit) {
-        filters.limit = 20;
-      }
-      
+      filters.limit = (_options?.limit as number) || 10;
       const issues = await linearService.searchIssues(filters);
       
-      // Fetch additional data for each issue
-      const issuesWithDetails = await Promise.all(
-        issues.map(async (issue: any) => {
-          const [assignee, state, team] = await Promise.all([
-            issue.assignee,
-            issue.state,
-            issue.team,
-          ]);
-          
-          return {
-            id: issue.id,
-            identifier: issue.identifier,
-            title: issue.title,
-            url: issue.url,
-            priority: issue.priority,
-            priorityLabel: issue.priorityLabel,
-            createdAt: issue.createdAt,
-            updatedAt: issue.updatedAt,
-            assignee: assignee ? assignee.name : 'Unassigned',
-            state: state.name,
-            team: team.name,
-          };
-        })
-      );
+      if (issues.length === 0) {
+        return {
+          text: 'No issues found matching your search criteria.',
+          success: true,
+          data: {
+            issues: [],
+            filters,
+            count: 0
+          }
+        };
+      }
       
-      logger.info(`Found ${issues.length} Linear issues matching criteria`);
+      const issueList = await Promise.all(issues.map(async (issue, index) => {
+        const state = await issue.state;
+        return `${index + 1}. ${issue.identifier}: ${issue.title} (${state?.name || 'No state'})`;
+      }));
+      const issueText = issueList.join('\n');
       
       return {
+        text: `Found ${issues.length} issue${issues.length === 1 ? '' : 's'}:\n${issueText}`,
         success: true,
         data: {
-          issues: issuesWithDetails,
-          count: issues.length,
-          filters: filters,
-        },
-        metadata: {
-          searchFilters: filters,
-          resultCount: issues.length,
-        },
+          issues: issues.map(i => ({
+            id: i.id,
+            identifier: i.identifier,
+            title: i.title,
+            description: i.description,
+            url: i.url,
+            state: i.state,
+            priority: i.priority,
+            priorityLabel: i.priorityLabel,
+            assignee: i.assignee
+          })),
+          filters,
+          count: issues.length
+        }
       };
-      
     } catch (error) {
-      logger.error('Failed to search Linear issues:', error);
+      logger.error('Failed to search issues:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to search issues',
+        text: `Failed to search issues: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Show me all open bugs',
-      output: 'Found 5 open issues labeled as "bug":\n1. BUG-123: Login timeout issue\n2. BUG-124: Image upload fails\n...',
-      explanation: 'Searches for issues with bug label in open states',
-    },
-    {
-      input: 'Find high priority issues assigned to me',
-      output: 'Found 3 high priority issues assigned to you:\n1. FEAT-456: Implement user dashboard\n2. BUG-789: Fix payment processing\n...',
-      explanation: 'Searches for high priority issues assigned to the current user',
-    },
-    {
-      input: 'Search for issues related to authentication',
-      output: 'Found 4 issues matching "authentication":\n1. SEC-001: Add 2FA support\n2. BUG-234: Password reset not working\n...',
-      explanation: 'Performs text search across issue titles and descriptions',
-    },
-  ] as ActionExample[],
+  }
 }; 

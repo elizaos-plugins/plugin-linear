@@ -1,24 +1,46 @@
-import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
-  logger,
-} from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 import type { LinearIssueInput } from '../types';
 
-export const updateLinearIssueAction: Action = {
+export const updateIssueAction: Action = {
   name: 'UPDATE_LINEAR_ISSUE',
   description: 'Update an existing Linear issue',
-  similes: ['update issue', 'modify issue', 'change issue', 'edit issue'],
+  similes: ['update-linear-issue', 'edit-linear-issue', 'modify-linear-issue'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Update issue ENG-123 title to "Fix login button on all devices"'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll update the title of issue ENG-123 for you.',
+        actions: ['UPDATE_LINEAR_ISSUE']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'Change the priority of BUG-456 to high'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll change the priority of BUG-456 to high.',
+        actions: ['UPDATE_LINEAR_ISSUE']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -27,8 +49,8 @@ export const updateLinearIssueAction: Action = {
   async handler(
     runtime: IAgentRuntime,
     message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -36,61 +58,92 @@ export const updateLinearIssueAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      const issueId = options?.issueId ? String(options.issueId) : undefined;
-      if (!issueId) {
+      const content = message.content.text;
+      if (!content) {
         return {
-          success: false,
-          error: 'Issue ID is required',
+          text: 'Please provide update instructions for the issue.',
+          success: false
         };
       }
       
+      // Extract issue ID from the message
+      const issueMatch = content.match(/(\w+-\d+)/);
+      if (!issueMatch) {
+        return {
+          text: 'Please specify an issue ID (e.g., ENG-123) to update.',
+          success: false
+        };
+      }
+      
+      const issueId = issueMatch[1];
+      
+      // Parse update instructions
       const updates: Partial<LinearIssueInput> = {};
       
-      if (options?.title !== undefined) updates.title = String(options.title);
-      if (options?.description !== undefined) updates.description = String(options.description);
-      if (options?.priority !== undefined) updates.priority = Number(options.priority);
-      if (options?.assigneeId !== undefined) updates.assigneeId = String(options.assigneeId);
-      if (options?.stateId !== undefined) updates.stateId = String(options.stateId);
-      if (options?.labelIds !== undefined) updates.labelIds = options.labelIds as string[];
-      if (options?.projectId !== undefined) updates.projectId = String(options.projectId);
-      if (options?.estimate !== undefined) updates.estimate = Number(options.estimate);
-      if (options?.dueDate !== undefined) updates.dueDate = new Date(String(options.dueDate));
+      // Title update
+      const titleMatch = content.match(/title to ["'](.+?)["']/i);
+      if (titleMatch) {
+        updates.title = titleMatch[1];
+      }
       
-      const issue = await linearService.updateIssue(issueId, updates);
+      // Priority update
+      const priorityMatch = content.match(/priority (?:to |as )?(\w+)/i);
+      if (priorityMatch) {
+        const priorityMap: Record<string, number> = {
+          'urgent': 1,
+          'high': 2,
+          'normal': 3,
+          'medium': 3,
+          'low': 4,
+        };
+        const priority = priorityMap[priorityMatch[1].toLowerCase()];
+        if (priority) {
+          updates.priority = priority;
+        }
+      }
       
-      logger.info(`Updated Linear issue: ${issue.identifier}`);
+      // Description update
+      const descMatch = content.match(/description to ["'](.+?)["']/i);
+      if (descMatch) {
+        updates.description = descMatch[1];
+      }
+      
+      // Status update
+      const statusMatch = content.match(/status to (\w+)/i);
+      if (statusMatch) {
+        // This would need to look up the state ID - simplified for now
+        logger.warn('Status updates not yet implemented');
+      }
+      
+      if (Object.keys(updates).length === 0) {
+        return {
+          text: 'No valid updates found. Please specify what to update (e.g., "Update issue ENG-123 title to \'New Title\'")',
+          success: false
+        };
+      }
+      
+      const updatedIssue = await linearService.updateIssue(issueId, updates);
+      
+      const updateSummary = Object.entries(updates)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(', ');
       
       return {
+        text: `Updated issue ${updatedIssue.identifier}: ${updateSummary}`,
         success: true,
         data: {
-          issue: {
-            id: issue.id,
-            identifier: issue.identifier,
-            title: issue.title,
-            url: issue.url,
-          },
-        },
-        metadata: {
-          issueId: issue.id,
-          identifier: issue.identifier,
-          updates: Object.keys(updates),
-        },
+          issueId: updatedIssue.id,
+          identifier: updatedIssue.identifier,
+          updates,
+          url: updatedIssue.url
+        }
       };
-      
     } catch (error) {
-      logger.error('Failed to update Linear issue:', error);
+      logger.error('Failed to update issue:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to update issue',
+        text: `Failed to update issue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Update issue ENG-123 title to "Fix login button on all devices"',
-      output: 'Updated issue ENG-123: Fix login button on all devices',
-      explanation: 'Updates the title of an existing issue',
-    },
-  ] as ActionExample[],
+  }
 }; 

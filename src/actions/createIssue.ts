@@ -1,49 +1,70 @@
 import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
+  Action,
+  ActionResult,
+  IAgentRuntime,
+  Memory,
+  State,
+  ModelType,
   logger,
-  validateEntityName,
 } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 import type { LinearIssueInput } from '../types';
 
-const createIssueTemplate = `Create a new Linear issue based on the user's request. Extract the necessary information from the conversation.
+const createIssueTemplate = `Given the user's request, extract the information needed to create a Linear issue.
 
-Recent conversation:
-{{recentMessages}}
+User request: "{{userMessage}}"
 
-When creating the issue:
-1. The title should be clear and concise
-2. The description should include all relevant details from the conversation
-3. Determine the appropriate team based on context
-4. Set priority if mentioned (1=Urgent, 2=High, 3=Normal, 4=Low)
-5. If no team is specified, use the default team
-
-Response format should be a valid JSON block:
-\`\`\`json
+Extract and return a JSON object with the following structure:
 {
-  "title": "Clear, actionable issue title",
-  "description": "Detailed description with context from the conversation",
-  "teamId": "team-id or null to use default",
-  "priority": 3,
-  "shouldCreate": true
+  "title": "Brief, clear issue title",
+  "description": "Detailed description of the issue (optional)",
+  "teamKey": "Team key if mentioned (e.g., ENG, PROD)",
+  "priority": "Priority level if mentioned (1=urgent, 2=high, 3=normal, 4=low)",
+  "labels": ["label1", "label2"] (if any labels are mentioned),
+  "assignee": "Assignee username or email if mentioned"
 }
-\`\`\`
-`;
 
-export const createLinearIssueAction: Action = {
+Return only the JSON object, no other text.`;
+
+export const createIssueAction: Action = {
   name: 'CREATE_LINEAR_ISSUE',
   description: 'Create a new issue in Linear',
-  similes: ['create issue', 'new issue', 'file issue', 'report issue', 'create ticket', 'new ticket'],
+  similes: ['create-linear-issue', 'new-linear-issue', 'add-linear-issue'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Create a new issue: Fix login button not working on mobile devices'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll create that issue for you in Linear.',
+        actions: ['CREATE_LINEAR_ISSUE']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'Create a bug report for the ENG team: API returns 500 error when updating user profile'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll create a bug report for the engineering team right away.',
+        actions: ['CREATE_LINEAR_ISSUE']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -52,8 +73,8 @@ export const createLinearIssueAction: Action = {
   async handler(
     runtime: IAgentRuntime,
     message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -61,125 +82,97 @@ export const createLinearIssueAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      // If we have explicit parameters, use them
-      if (options?.title && options?.teamId) {
-        const issueInput: LinearIssueInput = {
-          title: String(options.title),
-          description: options.description ? String(options.description) : undefined,
-          teamId: String(options.teamId),
-          priority: options.priority ? Number(options.priority) : 3,
-          assigneeId: options.assigneeId ? String(options.assigneeId) : undefined,
-          labelIds: options.labelIds ? (options.labelIds as string[]) : undefined,
-          projectId: options.projectId ? String(options.projectId) : undefined,
-        };
-        
-        const issue = await linearService.createIssue(issueInput);
-        
+      const content = message.content.text;
+      if (!content) {
         return {
-          success: true,
-          data: {
-            issue: {
-              id: issue.id,
-              identifier: issue.identifier,
-              title: issue.title,
-              url: issue.url,
-            },
-          },
-          metadata: {
-            issueId: issue.id,
-            identifier: issue.identifier,
-          },
+          text: 'Please provide a description for the issue.',
+          success: false
         };
       }
       
-      // Otherwise, use LLM to extract information
-      const response = await runtime.generateText({
-        messages: state.messages || [],
-        context: createIssueTemplate,
-      });
+      // Check if the message already has structured data
+      const structuredData = _options?.issueData as Partial<LinearIssueInput> | undefined;
       
-      const parsed = JSON.parse(response.trim().replace(/```json\n?|\n?```/g, ''));
+      let issueData: Partial<LinearIssueInput>;
       
-      if (!parsed.shouldCreate) {
-        return {
-          success: false,
-          error: 'Not enough information to create an issue',
-        };
-      }
-      
-      // If no teamId specified, get the first available team
-      let teamId = parsed.teamId;
-      let teamName: string | undefined;
-      
-      if (!teamId) {
-        const teams = await linearService.getTeams();
-        if (teams.length === 0) {
-          throw new Error('No teams available in Linear workspace');
-        }
-        teamId = teams[0].id;
-        teamName = teams[0].name;
+      if (structuredData) {
+        issueData = structuredData;
       } else {
-        // Get team name if teamId was provided
+        // Use LLM to extract issue information
+        const prompt = createIssueTemplate.replace('{{userMessage}}', content);
+        
+        const response = await runtime.useModel(ModelType.TEXT_LARGE, {
+          prompt: prompt
+        });
+        
+        if (!response) {
+          throw new Error('Failed to extract issue information');
+        }
+        
         try {
-          const team = await linearService.getTeam(teamId);
-          teamName = team.name;
-        } catch {
-          // Team name is optional, continue without it
+          const parsed = JSON.parse(response);
+          issueData = {
+            title: parsed.title,
+            description: parsed.description,
+            priority: parsed.priority,
+          };
+          
+          // Handle team assignment
+          if (parsed.teamKey) {
+            const teams = await linearService.getTeams();
+            const team = teams.find(t => 
+              t.key.toLowerCase() === parsed.teamKey.toLowerCase()
+            );
+            if (team) {
+              issueData.teamId = team.id;
+            }
+          }
+          
+          // Handle assignee
+          if (parsed.assignee) {
+            const users = await linearService.getUsers();
+            const user = users.find(u => 
+              u.email === parsed.assignee || 
+              u.name.toLowerCase().includes(parsed.assignee.toLowerCase())
+            );
+            if (user) {
+              issueData.assigneeId = user.id;
+            }
+          }
+        } catch (parseError) {
+          logger.error('Failed to parse LLM response:', parseError);
+          // Fallback to simple title extraction
+          issueData = {
+            title: content.length > 100 ? content.substring(0, 100) + '...' : content,
+            description: content
+          };
         }
       }
       
-      const issueInput: LinearIssueInput = {
-        title: parsed.title,
-        description: parsed.description,
-        teamId: teamId,
-        priority: parsed.priority || 3,
-      };
+      if (!issueData.title) {
+        return {
+          text: 'Could not determine issue title. Please provide more details.',
+          success: false
+        };
+      }
       
-      const issue = await linearService.createIssue(issueInput);
-      
-      logger.info(`Created Linear issue: ${issue.identifier} - ${issue.title}`);
+      const issue = await linearService.createIssue(issueData as LinearIssueInput);
       
       return {
+        text: `Created issue: ${issue.title} (${issue.identifier})`,
         success: true,
         data: {
-          issue: {
-            id: issue.id,
-            identifier: issue.identifier,
-            title: issue.title,
-            url: issue.url,
-            teamName: teamName,
-          },
-        },
-        metadata: {
           issueId: issue.id,
           identifier: issue.identifier,
-        },
+          url: issue.url
+        }
       };
-      
     } catch (error) {
-      logger.error('Failed to create Linear issue:', error);
+      logger.error('Failed to create issue:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to create issue',
+        text: `Failed to create issue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Create a new issue: Fix login button not working on mobile devices',
-      output: 'Created issue ENG-123: Fix login button not working on mobile devices',
-      explanation: 'Creates a new issue with the provided title',
-    },
-    {
-      input: 'File a bug report: Users cannot upload images larger than 5MB, getting timeout errors',
-      output: 'Created issue BUG-456: Image upload timeout for files > 5MB',
-      explanation: 'Creates a bug report with extracted details',
-    },
-    {
-      input: 'Create a high priority ticket for the payment processing error we discussed',
-      output: 'Created high priority issue PAY-789: Payment processing error investigation',
-      explanation: 'Creates an issue with priority based on conversation context',
-    },
-  ] as ActionExample[],
+  }
 }; 

@@ -1,23 +1,45 @@
-import {
-  type Action,
-  type ActionExample,
-  type IAgentRuntime,
-  type Memory,
-  type State,
-  type ActionResult,
-  logger,
-} from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
-export const getLinearIssueAction: Action = {
+export const getIssueAction: Action = {
   name: 'GET_LINEAR_ISSUE',
-  description: 'Get details of a specific Linear issue by ID or identifier',
-  similes: ['get issue', 'show issue', 'fetch issue', 'view issue', 'issue details', 'what is issue'],
+  description: 'Get details of a specific Linear issue',
+  similes: ['get-linear-issue', 'show-linear-issue', 'view-linear-issue'],
   
-  async validate(runtime: IAgentRuntime, _message: Memory, state: State): Promise<boolean> {
+  examples: [[
+    {
+      name: 'User',
+      content: {
+        text: 'Show me issue ENG-123'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll get the details for issue ENG-123.',
+        actions: ['GET_LINEAR_ISSUE']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'What\'s the status of BUG-456?'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'Let me check the status of BUG-456 for you.',
+        actions: ['GET_LINEAR_ISSUE']
+      }
+    }
+  ]],
+  
+  async validate(runtime: IAgentRuntime, _message: Memory, _state?: State): Promise<boolean> {
     try {
-      const linearService = runtime.getService<LinearService>('linear');
-      return !!linearService;
+      const apiKey = runtime.getSetting('LINEAR_API_KEY');
+      return !!apiKey;
     } catch {
       return false;
     }
@@ -26,8 +48,8 @@ export const getLinearIssueAction: Action = {
   async handler(
     runtime: IAgentRuntime,
     message: Memory,
-    state: State,
-    options?: Record<string, unknown>
+    _state?: State,
+    _options?: Record<string, unknown>
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -35,111 +57,97 @@ export const getLinearIssueAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      // Extract issue ID or identifier from options or message
-      let issueId: string | undefined;
-      
-      if (options?.issueId) {
-        issueId = String(options.issueId);
-      } else {
-        // Try to extract issue identifier from the message (e.g., "ENG-123")
-        const issuePattern = /\b[A-Z]+-\d+\b/;
-        const match = message.content.text?.match(issuePattern);
-        if (match) {
-          issueId = match[0];
-        }
-      }
-      
-      if (!issueId) {
+      const content = message.content.text;
+      if (!content) {
         return {
-          success: false,
-          error: 'No issue ID or identifier provided',
+          text: 'Please specify an issue ID.',
+          success: false
         };
       }
       
+      // Extract issue ID from the message
+      const issueMatch = content.match(/(\w+-\d+)/);
+      if (!issueMatch) {
+        return {
+          text: 'Please provide a valid issue ID (e.g., ENG-123).',
+          success: false
+        };
+      }
+      
+      const issueId = issueMatch[1];
       const issue = await linearService.getIssue(issueId);
       
-      // Fetch additional related data
-      const [assignee, state, team, labels] = await Promise.all([
-        issue.assignee,
-        issue.state,
-        issue.team,
-        issue.labels(),
-      ]);
+      const assignee = await issue.assignee;
+      const state = await issue.state;
+      const team = await issue.team;
+      const labels = await issue.labels();
+      const project = await issue.project;
       
-      const labelList = await labels.nodes;
-      
-      const issueData = {
+      const issueDetails = {
         id: issue.id,
         identifier: issue.identifier,
         title: issue.title,
         description: issue.description,
-        url: issue.url,
         priority: issue.priority,
         priorityLabel: issue.priorityLabel,
-        estimate: issue.estimate,
+        url: issue.url,
         createdAt: issue.createdAt,
         updatedAt: issue.updatedAt,
         dueDate: issue.dueDate,
+        estimate: issue.estimate,
         assignee: assignee ? {
           id: assignee.id,
           name: assignee.name,
           email: assignee.email,
         } : null,
-        state: {
+        state: state ? {
           id: state.id,
           name: state.name,
           type: state.type,
           color: state.color,
-        },
-        team: {
+        } : null,
+        team: team ? {
           id: team.id,
           name: team.name,
           key: team.key,
-        },
-        labels: labelList.map((label: any) => ({
+        } : null,
+        labels: labels.nodes.map(label => ({
           id: label.id,
           name: label.name,
           color: label.color,
         })),
+        project: project ? {
+          id: project.id,
+          name: project.name,
+        } : null,
       };
       
-      logger.info(`Retrieved Linear issue: ${issue.identifier}`);
+      // Format the response text
+      let responseText = `Issue ${issue.identifier}: ${issue.title}\n`;
+      responseText += `Status: ${state?.name || 'Unknown'}\n`;
+      responseText += `Priority: ${issue.priorityLabel}\n`;
+      if (assignee) {
+        responseText += `Assignee: ${assignee.name}\n`;
+      }
+      if (issue.dueDate) {
+        responseText += `Due: ${new Date(issue.dueDate).toLocaleDateString()}\n`;
+      }
+      if (issue.description) {
+        responseText += `\nDescription: ${issue.description}\n`;
+      }
+      responseText += `\nView in Linear: ${issue.url}`;
       
       return {
+        text: responseText,
         success: true,
-        data: {
-          issue: issueData,
-        },
-        metadata: {
-          issueId: issue.id,
-          identifier: issue.identifier,
-        },
+        data: issueDetails
       };
-      
     } catch (error) {
-      logger.error('Failed to get Linear issue:', error);
+      logger.error('Failed to get issue:', error);
       return {
-        success: false,
-        error: error instanceof Error ? error.message : 'Failed to get issue',
+        text: `Failed to get issue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        success: false
       };
     }
-  },
-  
-  examples: [
-    {
-      input: 'Show me issue ENG-123',
-      output: 'Issue ENG-123: Fix login button on mobile\nStatus: In Progress\nAssignee: John Doe\nPriority: High',
-      explanation: 'Retrieves issue details by identifier',
-    },
-    {
-      input: 'Get details for BUG-456',
-      output: 'Issue BUG-456: Image upload timeout\nStatus: Todo\nAssignee: Unassigned\nPriority: Urgent\nLabels: bug, performance',
-      explanation: 'Fetches comprehensive issue information',
-    },
-    {
-      input: 'What is the status of FEAT-789?',
-      output: 'Issue FEAT-789: Add dark mode support\nStatus: Done\nAssignee: Jane Smith\nCompleted: 2 days ago',
-      explanation: 'Shows current status and details of an issue',
-    },
-  ] as ActionExample[],
+  }
 }; 

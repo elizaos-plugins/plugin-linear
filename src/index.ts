@@ -1,36 +1,44 @@
-import type { Plugin } from '@elizaos/core';
+import { Plugin } from '@elizaos/core';
 import { LinearService } from './services/linear';
-import * as actions from './actions';
-import * as providers from './providers';
+
+// Import all actions
+import { createIssueAction } from './actions/createIssue';
+import { getIssueAction } from './actions/getIssue';
+import { updateIssueAction } from './actions/updateIssue';
+import { searchIssuesAction } from './actions/searchIssues';
+import { createCommentAction } from './actions/createComment';
+import { listTeamsAction } from './actions/listTeams';
+import { listProjectsAction } from './actions/listProjects';
+import { getActivityAction } from './actions/getActivity';
+import { clearActivityAction } from './actions/clearActivity';
+
+// Import all providers
+import { linearIssuesProvider } from './providers/issues';
+import { linearTeamsProvider } from './providers/teams';
+import { linearProjectsProvider } from './providers/projects';
+import { linearActivityProvider } from './providers/activity';
 
 export const linearPlugin: Plugin = {
-  name: 'linear',
-  description: 'Linear integration plugin for issue tracking and project management',
-  
+  name: '@elizaos/plugin-linear',
+  description: 'Plugin for integrating with Linear issue tracking system',
   services: [LinearService],
-  
   actions: [
-    actions.createLinearIssueAction,
-    actions.getLinearIssueAction,
-    actions.updateLinearIssueAction,
-    actions.searchLinearIssuesAction,
-    actions.createLinearCommentAction,
-    actions.listLinearTeamsAction,
-    actions.listLinearProjectsAction,
-    actions.getLinearActivityAction,
-    actions.clearLinearActivityAction,
+    createIssueAction,
+    getIssueAction,
+    updateIssueAction,
+    searchIssuesAction,
+    createCommentAction,
+    listTeamsAction,
+    listProjectsAction,
+    getActivityAction,
+    clearActivityAction,
   ],
-  
   providers: [
-    providers.linearIssuesProvider,
-    providers.linearTeamsProvider,
-    providers.linearProjectsProvider,
-    providers.linearActivityProvider,
+    linearIssuesProvider,
+    linearTeamsProvider,
+    linearProjectsProvider,
+    linearActivityProvider,
   ],
-  
-  // No evaluators or events for this plugin
-  evaluators: [],
-  events: {},
 };
 
 // Re-export types and service for external use
