@@ -1,6 +1,6 @@
 {
   "name": "@elizaos/plugin-linear",
-  "version": "1.2.7",
+  "version": "1.2.8",
   "description": "Linear integration plugin for ElizaOS",
   "main": "dist/index.js",
   "module": "dist/index.js",

@@ -17,11 +17,11 @@ User request: "{{userMessage}}"
 Extract and return ONLY a JSON object (no markdown formatting, no code blocks) with the following structure:
 {
   "title": "Brief, clear issue title",
-  "description": "Detailed description of the issue (optional)",
-  "teamKey": "Team key if mentioned (e.g., ENG, PROD)",
-  "priority": "Priority level if mentioned (1=urgent, 2=high, 3=normal, 4=low)",
-  "labels": ["label1", "label2"] (if any labels are mentioned),
-  "assignee": "Assignee username or email if mentioned"
+  "description": "Detailed description of the issue (optional, omit or use null if not provided)",
+  "teamKey": "Team key if mentioned (e.g., ENG, PROD) - omit or use null if not mentioned",
+  "priority": "Priority level if mentioned (1=urgent, 2=high, 3=normal, 4=low) - omit or use null if not mentioned",
+  "labels": ["label1", "label2"] (if any labels are mentioned, empty array if none),
+  "assignee": "Assignee username or email if mentioned - omit or use null if not mentioned"
 }
 
 Return only the JSON object, no other text.`;
@@ -113,10 +113,12 @@ export const createIssueAction: Action = {
           // Strip markdown code blocks if present
           const cleanedResponse = response.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim();
           const parsed = JSON.parse(cleanedResponse);
+          
+          // Clean up parsed data - convert empty strings to undefined for fields that need it
           issueData = {
-            title: parsed.title,
-            description: parsed.description,
-            priority: parsed.priority,
+            title: parsed.title || undefined,
+            description: parsed.description || undefined,
+            priority: parsed.priority ? Number(parsed.priority) : undefined,
           };
           
           // Handle team assignment
@@ -131,14 +133,38 @@ export const createIssueAction: Action = {
           }
           
           // Handle assignee
-          if (parsed.assignee) {
+          if (parsed.assignee && parsed.assignee !== '') {
+            // Clean up assignee - remove @ symbol if present
+            const cleanAssignee = parsed.assignee.replace(/^@/, '');
+            
             const users = await linearService.getUsers();
             const user = users.find(u => 
-              u.email === parsed.assignee || 
-              u.name.toLowerCase().includes(parsed.assignee.toLowerCase())
+              u.email === cleanAssignee || 
+              u.name.toLowerCase().includes(cleanAssignee.toLowerCase())
             );
             if (user) {
               issueData.assigneeId = user.id;
+            }
+          }
+          
+          // Handle labels
+          if (parsed.labels && Array.isArray(parsed.labels) && parsed.labels.length > 0) {
+            const labels = await linearService.getLabels(issueData.teamId);
+            const labelIds: string[] = [];
+            
+            for (const labelName of parsed.labels) {
+              if (labelName && labelName !== '') {
+                const label = labels.find(l => 
+                  l.name.toLowerCase() === labelName.toLowerCase()
+                );
+                if (label) {
+                  labelIds.push(label.id);
+                }
+              }
+            }
+            
+            if (labelIds.length > 0) {
+              issueData.labelIds = labelIds;
             }
           }
           
