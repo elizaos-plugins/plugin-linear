@@ -1,1 +1,303 @@
-# plugin-linear
+# @elizaos/plugin-linear
+
+A comprehensive Linear integration plugin for ElizaOS that enables issue tracking, project management, and team collaboration through the Linear API.
+
+## Features
+
+### 📋 Issue Management
+- **Create Issues**: Create new issues with title, description, priority, assignees, and labels
+- **Get Issue Details**: Retrieve comprehensive information about specific issues
+- **Update Issues**: Modify existing issues with new information
+- **Search Issues**: Find issues using various filters and search criteria
+- **Add Comments**: Comment on existing issues
+
+### 👥 Team & User Management
+- **List Teams**: View all teams in your Linear workspace
+- **Get Team Details**: Retrieve specific team information
+- **List Users**: View all users in the workspace
+- **Get Current User**: Retrieve information about the authenticated user
+
+### 📊 Project Management
+- **List Projects**: View all projects, optionally filtered by team
+- **Get Project Details**: Retrieve specific project information
+- **Project Status**: Track project states and timelines
+
+### 📈 Activity Tracking
+- **Activity Log**: Track all Linear operations performed by the agent
+- **Clear Activity**: Reset the activity log
+- **Success/Error Tracking**: Monitor operation success rates
+
+## Installation
+
+```bash
+npm install @elizaos/plugin-linear
+```
+
+## Configuration
+
+The plugin requires a Linear API key for authentication. You can obtain one from your [Linear settings](https://linear.app/settings/api).
+
+### Environment Variables
+
+Create a `.env` file in your project root:
+
+```env
+# Required
+LINEAR_API_KEY=your_linear_api_key_here
+
+# Optional
+LINEAR_WORKSPACE_ID=your_workspace_id_here
+```
+
+## Usage
+
+### Register the Plugin
+
+```typescript
+import { linearPlugin } from '@elizaos/plugin-linear';
+
+// Register with your ElizaOS agent
+agent.registerPlugin(linearPlugin);
+```
+
+### Available Actions
+
+#### Create Issue
+```typescript
+// Natural language
+"Create a new issue: Fix login button not working on mobile devices"
+
+// With options
+{
+  action: "CREATE_LINEAR_ISSUE",
+  options: {
+    title: "Fix login button",
+    description: "The login button is not responsive on mobile devices",
+    teamId: "team-123",
+    priority: 2, // High
+    assigneeId: "user-456"
+  }
+}
+```
+
+#### Get Issue
+```typescript
+// Natural language
+"Show me issue ENG-123"
+
+// With options
+{
+  action: "GET_LINEAR_ISSUE",
+  options: {
+    issueId: "issue-id-or-identifier"
+  }
+}
+```
+
+#### Search Issues
+```typescript
+// Natural language
+"Show me all high priority bugs assigned to me"
+
+// With options
+{
+  action: "SEARCH_LINEAR_ISSUES",
+  options: {
+    query: "bug",
+    priority: [1, 2], // Urgent and High
+    state: ["in-progress", "todo"],
+    limit: 20
+  }
+}
+```
+
+#### Update Issue
+```typescript
+// With options
+{
+  action: "UPDATE_LINEAR_ISSUE",
+  options: {
+    issueId: "issue-id",
+    title: "Updated title",
+    priority: 1,
+    stateId: "state-id"
+  }
+}
+```
+
+#### Add Comment
+```typescript
+// Natural language
+"Comment on ENG-123: This has been fixed in the latest release"
+
+// With options
+{
+  action: "CREATE_LINEAR_COMMENT",
+  options: {
+    issueId: "issue-id",
+    body: "This has been fixed in the latest release"
+  }
+}
+```
+
+#### List Teams
+```typescript
+// Natural language
+"Show me all teams"
+```
+
+#### List Projects
+```typescript
+// Natural language
+"Show me all projects"
+
+// Filter by team
+{
+  action: "LIST_LINEAR_PROJECTS",
+  options: {
+    teamId: "team-id"
+  }
+}
+```
+
+#### Get Activity
+```typescript
+// Natural language
+"Show me recent Linear activity"
+
+// With options
+{
+  action: "GET_LINEAR_ACTIVITY",
+  options: {
+    limit: 50,
+    filter: { resource_type: "issue" }
+  }
+}
+```
+
+### Providers
+
+The plugin includes several context providers that supply Linear data to the agent:
+
+#### LINEAR_ISSUES
+Provides context about recent Linear issues:
+```typescript
+"Recent Linear Issues:
+- ENG-123: Fix login button (In Progress, John Doe)
+- BUG-456: Memory leak in dashboard (Todo, Unassigned)
+..."
+```
+
+#### LINEAR_TEAMS
+Provides context about Linear teams:
+```typescript
+"Linear Teams:
+- Engineering (ENG): Core development team
+- Design (DES): Product design team
+..."
+```
+
+#### LINEAR_PROJECTS
+Provides context about active Linear projects:
+```typescript
+"Active Linear Projects:
+- Q1 2024 Roadmap: started (Jan 1 - Mar 31)
+- Mobile App Redesign: planned (Feb 1 - Apr 30)
+..."
+```
+
+#### LINEAR_ACTIVITY
+Provides context about recent Linear activity:
+```typescript
+"Recent Linear Activity:
+✓ 2:30 PM: create_issue issue ENG-789
+✗ 2:25 PM: update_issue issue BUG-456
+..."
+```
+
+## Service API
+
+The plugin exposes a `LinearService` that can be accessed programmatically:
+
+```typescript
+const linearService = runtime.getService<LinearService>('linear');
+
+// Create an issue
+const issue = await linearService.createIssue({
+  title: "New feature request",
+  description: "Detailed description",
+  teamId: "team-123",
+  priority: 3
+});
+
+// Search issues
+const issues = await linearService.searchIssues({
+  query: "authentication",
+  state: ["todo", "in-progress"],
+  limit: 10
+});
+
+// Get teams
+const teams = await linearService.getTeams();
+
+// Activity tracking
+const recentActivity = linearService.getActivityLog(50);
+```
+
+## Error Handling
+
+The plugin includes custom error classes for better error handling:
+
+- `LinearAPIError`: General API errors
+- `LinearAuthenticationError`: Authentication failures
+- `LinearRateLimitError`: Rate limit exceeded
+
+```typescript
+try {
+  await linearService.createIssue(issueData);
+} catch (error) {
+  if (error instanceof LinearAuthenticationError) {
+    // Handle auth error
+  } else if (error instanceof LinearRateLimitError) {
+    // Handle rate limit
+  }
+}
+```
+
+## Priority Levels
+
+Linear uses numeric priority levels:
+- 0: No priority
+- 1: Urgent
+- 2: High
+- 3: Normal (default)
+- 4: Low
+
+## Development
+
+### Building
+```bash
+npm run build
+```
+
+### Testing
+```bash
+npm run test
+```
+
+### Linting
+```bash
+npm run lint
+```
+
+## License
+
+MIT
+
+## Contributing
+
+Contributions are welcome! Please feel free to submit a Pull Request.
+
+## Support
+
+For issues and feature requests, please create an issue on the [GitHub repository](https://github.com/elizaos/eliza).
