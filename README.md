@@ -1,1 +1,1 @@
-# linear-plugin
+# plugin-linear
