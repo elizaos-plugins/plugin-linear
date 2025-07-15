@@ -14,7 +14,7 @@ const searchTemplate = `Extract search criteria from the user's request for Line
 
 User request: "{{userMessage}}"
 
-Extract and return a JSON object with these possible filters:
+Extract and return ONLY a JSON object (no markdown formatting, no code blocks) with these possible filters:
 {
   "query": "general search text",
   "state": "filter by state name (e.g., 'In Progress', 'Done', 'Todo')",
@@ -110,7 +110,9 @@ export const searchIssuesAction: Action = {
           filters = { query: content };
         } else {
           try {
-            const parsed = JSON.parse(response);
+            // Strip markdown code blocks if present
+            const cleanedResponse = response.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim();
+            const parsed = JSON.parse(cleanedResponse);
             filters = {
               query: parsed.query,
               state: parsed.state ? [parsed.state] : undefined,

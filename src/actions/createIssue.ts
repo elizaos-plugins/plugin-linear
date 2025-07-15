@@ -14,7 +14,7 @@ const createIssueTemplate = `Given the user's request, extract the information n
 
 User request: "{{userMessage}}"
 
-Extract and return a JSON object with the following structure:
+Extract and return ONLY a JSON object (no markdown formatting, no code blocks) with the following structure:
 {
   "title": "Brief, clear issue title",
   "description": "Detailed description of the issue (optional)",
@@ -110,7 +110,9 @@ export const createIssueAction: Action = {
         }
         
         try {
-          const parsed = JSON.parse(response);
+          // Strip markdown code blocks if present
+          const cleanedResponse = response.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim();
+          const parsed = JSON.parse(cleanedResponse);
           issueData = {
             title: parsed.title,
             description: parsed.description,
@@ -139,6 +141,15 @@ export const createIssueAction: Action = {
               issueData.assigneeId = user.id;
             }
           }
+          
+          // If no team was specified, use the first available team as default
+          if (!issueData.teamId) {
+            const teams = await linearService.getTeams();
+            if (teams.length > 0) {
+              issueData.teamId = teams[0].id;
+              logger.warn(`No team specified, using default team: ${teams[0].name}`);
+            }
+          }
         } catch (parseError) {
           logger.error('Failed to parse LLM response:', parseError);
           // Fallback to simple title extraction
@@ -146,12 +157,27 @@ export const createIssueAction: Action = {
             title: content.length > 100 ? content.substring(0, 100) + '...' : content,
             description: content
           };
+          
+          // Ensure we have a teamId even in fallback case
+          const teams = await linearService.getTeams();
+          if (teams.length > 0) {
+            issueData.teamId = teams[0].id;
+            logger.warn(`Using default team for fallback: ${teams[0].name}`);
+          }
         }
       }
       
       if (!issueData.title) {
         return {
           text: 'Could not determine issue title. Please provide more details.',
+          success: false
+        };
+      }
+      
+      // Final check for required teamId
+      if (!issueData.teamId) {
+        return {
+          text: 'No Linear teams found. Please ensure at least one team exists in your Linear workspace.',
           success: false
         };
       }
