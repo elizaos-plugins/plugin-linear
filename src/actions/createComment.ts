@@ -1,4 +1,4 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, ActionExample, logger } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, ActionExample, logger, HandlerCallback } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
 export const createCommentAction: Action = {
@@ -49,7 +49,8 @@ export const createCommentAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -59,8 +60,13 @@ export const createCommentAction: Action = {
       
       const content = message.content.text;
       if (!content) {
+        const errorMessage = 'Please provide a message with the issue ID and comment content.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please provide a message with the issue ID and comment content.',
+          text: errorMessage,
           success: false
         };
       }
@@ -68,8 +74,13 @@ export const createCommentAction: Action = {
       const issueMatch = content.match(/(?:comment on|add.*comment.*to)\s+(\w+-\d+):?\s*(.*)/i);
       
       if (!issueMatch) {
+        const errorMessage = 'Please specify the issue ID and comment content. Example: "Comment on ENG-123: This looks good"';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please specify the issue ID and comment content. Example: "Comment on ENG-123: This looks good"',
+          text: errorMessage,
           success: false
         };
       }
@@ -84,6 +95,12 @@ export const createCommentAction: Action = {
         body: commentBody.trim()
       });
       
+      const successMessage = `✅ Comment added to issue ${issueIdentifier}: "${commentBody.trim()}"`;
+      await callback?.({
+        text: successMessage,
+        source: message.content.source
+      });
+      
       return {
         text: `Comment added to issue ${issueIdentifier}: "${commentBody.trim()}"`,
         success: true,
@@ -94,8 +111,13 @@ export const createCommentAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to create comment:', error);
+      const errorMessage = `❌ Failed to create comment: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to create comment: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

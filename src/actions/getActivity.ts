@@ -1,4 +1,4 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
 export const getActivityAction: Action = {
@@ -47,9 +47,10 @@ export const getActivityAction: Action = {
   
   async handler(
     runtime: IAgentRuntime,
-    _message: Memory,
+    message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -60,8 +61,13 @@ export const getActivityAction: Action = {
       const activity = linearService.getActivityLog();
       
       if (activity.length === 0) {
+        const noActivityMessage = 'No recent Linear activity found.';
+        await callback?.({
+          text: noActivityMessage,
+          source: message.content.source
+        });
         return {
-          text: 'No recent Linear activity found.',
+          text: noActivityMessage,
           success: true,
           data: {
             activity: []
@@ -77,6 +83,12 @@ export const getActivityAction: Action = {
         })
         .join('\n');
       
+      const resultMessage = `📊 Recent Linear activity:\n${activityText}`;
+      await callback?.({
+        text: resultMessage,
+        source: message.content.source
+      });
+      
       return {
         text: `Recent Linear activity:\n${activityText}`,
         success: true,
@@ -87,8 +99,13 @@ export const getActivityAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to get Linear activity:', error);
+      const errorMessage = `❌ Failed to get Linear activity: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to get Linear activity: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

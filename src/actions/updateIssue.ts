@@ -1,4 +1,4 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 import type { LinearIssueInput } from '../types';
 
@@ -50,7 +50,8 @@ export const updateIssueAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -60,8 +61,13 @@ export const updateIssueAction: Action = {
       
       const content = message.content.text;
       if (!content) {
+        const errorMessage = 'Please provide update instructions for the issue.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please provide update instructions for the issue.',
+          text: errorMessage,
           success: false
         };
       }
@@ -69,8 +75,13 @@ export const updateIssueAction: Action = {
       // Extract issue ID from the message
       const issueMatch = content.match(/(\w+-\d+)/);
       if (!issueMatch) {
+        const errorMessage = 'Please specify an issue ID (e.g., ENG-123) to update.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please specify an issue ID (e.g., ENG-123) to update.',
+          text: errorMessage,
           success: false
         };
       }
@@ -116,8 +127,13 @@ export const updateIssueAction: Action = {
       }
       
       if (Object.keys(updates).length === 0) {
+        const errorMessage = 'No valid updates found. Please specify what to update (e.g., "Update issue ENG-123 title to \'New Title\'")';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'No valid updates found. Please specify what to update (e.g., "Update issue ENG-123 title to \'New Title\'")',
+          text: errorMessage,
           success: false
         };
       }
@@ -127,6 +143,12 @@ export const updateIssueAction: Action = {
       const updateSummary = Object.entries(updates)
         .map(([key, value]) => `${key}: ${value}`)
         .join(', ');
+      
+      const successMessage = `✅ Updated issue ${updatedIssue.identifier}: ${updateSummary}\n\nView it at: ${updatedIssue.url}`;
+      await callback?.({
+        text: successMessage,
+        source: message.content.source
+      });
       
       return {
         text: `Updated issue ${updatedIssue.identifier}: ${updateSummary}`,
@@ -140,8 +162,13 @@ export const updateIssueAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to update issue:', error);
+      const errorMessage = `❌ Failed to update issue: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to update issue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

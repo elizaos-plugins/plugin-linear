@@ -6,6 +6,7 @@ import {
   State,
   ModelType,
   logger,
+  HandlerCallback,
 } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 import type { LinearIssueInput } from '../types';
@@ -74,7 +75,8 @@ export const createIssueAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -84,8 +86,13 @@ export const createIssueAction: Action = {
       
       const content = message.content.text;
       if (!content) {
+        const errorMessage = 'Please provide a description for the issue.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please provide a description for the issue.',
+          text: errorMessage,
           success: false
         };
       }
@@ -194,21 +201,38 @@ export const createIssueAction: Action = {
       }
       
       if (!issueData.title) {
+        const errorMessage = 'Could not determine issue title. Please provide more details.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Could not determine issue title. Please provide more details.',
+          text: errorMessage,
           success: false
         };
       }
       
       // Final check for required teamId
       if (!issueData.teamId) {
+        const errorMessage = 'No Linear teams found. Please ensure at least one team exists in your Linear workspace.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'No Linear teams found. Please ensure at least one team exists in your Linear workspace.',
+          text: errorMessage,
           success: false
         };
       }
       
       const issue = await linearService.createIssue(issueData as LinearIssueInput);
+      
+      // Send success message to channel
+      const successMessage = `✅ Created Linear issue: ${issue.title} (${issue.identifier})\n\nView it at: ${issue.url}`;
+      await callback?.({
+        text: successMessage,
+        source: message.content.source
+      });
       
       return {
         text: `Created issue: ${issue.title} (${issue.identifier})`,
@@ -221,8 +245,13 @@ export const createIssueAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to create issue:', error);
+      const errorMessage = `❌ Failed to create issue: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to create issue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

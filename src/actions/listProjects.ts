@@ -1,4 +1,4 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
 export const listProjectsAction: Action = {
@@ -47,9 +47,10 @@ export const listProjectsAction: Action = {
   
   async handler(
     runtime: IAgentRuntime,
-    _message: Memory,
+    message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -60,8 +61,13 @@ export const listProjectsAction: Action = {
       const projects = await linearService.getProjects();
       
       if (projects.length === 0) {
+        const noProjectsMessage = 'No projects found in Linear.';
+        await callback?.({
+          text: noProjectsMessage,
+          source: message.content.source
+        });
         return {
-          text: 'No projects found in Linear.',
+          text: noProjectsMessage,
           success: true,
           data: {
             projects: []
@@ -85,6 +91,12 @@ export const listProjectsAction: Action = {
         const teamNames = project.teamsList.map((t: any) => t.name).join(', ') || 'No teams';
         return `${index + 1}. ${project.name}${project.description ? ` - ${project.description}` : ''} (Teams: ${teamNames})`;
       }).join('\n');
+      
+      const resultMessage = `📁 Found ${projects.length} project${projects.length === 1 ? '' : 's'}:\n${projectList}`;
+      await callback?.({
+        text: resultMessage,
+        source: message.content.source
+      });
       
       return {
         text: `Found ${projects.length} project${projects.length === 1 ? '' : 's'}:\n${projectList}`,
@@ -110,8 +122,13 @@ export const listProjectsAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to list projects:', error);
+      const errorMessage = `❌ Failed to list projects: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to list projects: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

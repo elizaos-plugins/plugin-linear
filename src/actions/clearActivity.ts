@@ -1,4 +1,4 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, ActionExample, logger } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, ActionExample, logger, HandlerCallback } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
 export const clearActivityAction: Action = {
@@ -49,7 +49,8 @@ export const clearActivityAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -59,14 +60,25 @@ export const clearActivityAction: Action = {
       
       await linearService.clearActivityLog();
       
+      const successMessage = '✅ Linear activity log has been cleared.';
+      await callback?.({
+        text: successMessage,
+        source: message.content.source
+      });
+      
       return {
-        text: 'Linear activity log has been cleared.',
+        text: successMessage,
         success: true
       };
     } catch (error) {
       logger.error('Failed to clear Linear activity:', error);
+      const errorMessage = `❌ Failed to clear Linear activity: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to clear Linear activity: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

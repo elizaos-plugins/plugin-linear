@@ -6,6 +6,7 @@ import {
   State,
   ModelType,
   logger,
+  HandlerCallback,
 } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 import type { LinearSearchFilters } from '../types';
@@ -76,7 +77,8 @@ export const searchIssuesAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -86,8 +88,13 @@ export const searchIssuesAction: Action = {
       
       const content = message.content.text;
       if (!content) {
+        const errorMessage = 'Please provide search criteria for issues.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please provide search criteria for issues.',
+          text: errorMessage,
           success: false
         };
       }
@@ -141,8 +148,13 @@ export const searchIssuesAction: Action = {
       const issues = await linearService.searchIssues(filters);
       
       if (issues.length === 0) {
+        const noResultsMessage = 'No issues found matching your search criteria.';
+        await callback?.({
+          text: noResultsMessage,
+          source: message.content.source
+        });
         return {
-          text: 'No issues found matching your search criteria.',
+          text: noResultsMessage,
           success: true,
           data: {
             issues: [],
@@ -157,6 +169,12 @@ export const searchIssuesAction: Action = {
         return `${index + 1}. ${issue.identifier}: ${issue.title} (${state?.name || 'No state'})`;
       }));
       const issueText = issueList.join('\n');
+      
+      const resultMessage = `📋 Found ${issues.length} issue${issues.length === 1 ? '' : 's'}:\n${issueText}`;
+      await callback?.({
+        text: resultMessage,
+        source: message.content.source
+      });
       
       return {
         text: `Found ${issues.length} issue${issues.length === 1 ? '' : 's'}:\n${issueText}`,
@@ -179,8 +197,13 @@ export const searchIssuesAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to search issues:', error);
+      const errorMessage = `❌ Failed to search issues: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to search issues: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

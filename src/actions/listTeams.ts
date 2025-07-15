@@ -1,4 +1,4 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
 export const listTeamsAction: Action = {
@@ -47,9 +47,10 @@ export const listTeamsAction: Action = {
   
   async handler(
     runtime: IAgentRuntime,
-    _message: Memory,
+    message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -60,8 +61,13 @@ export const listTeamsAction: Action = {
       const teams = await linearService.getTeams();
       
       if (teams.length === 0) {
+        const noTeamsMessage = 'No teams found in Linear.';
+        await callback?.({
+          text: noTeamsMessage,
+          source: message.content.source
+        });
         return {
-          text: 'No teams found in Linear.',
+          text: noTeamsMessage,
           success: true,
           data: {
             teams: []
@@ -72,6 +78,12 @@ export const listTeamsAction: Action = {
       const teamList = teams.map((team, index) => 
         `${index + 1}. ${team.name} (${team.key})${team.description ? ` - ${team.description}` : ''}`
       ).join('\n');
+      
+      const resultMessage = `👥 Found ${teams.length} team${teams.length === 1 ? '' : 's'}:\n${teamList}`;
+      await callback?.({
+        text: resultMessage,
+        source: message.content.source
+      });
       
       return {
         text: `Found ${teams.length} team${teams.length === 1 ? '' : 's'}:\n${teamList}`,
@@ -88,8 +100,13 @@ export const listTeamsAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to list teams:', error);
+      const errorMessage = `❌ Failed to list teams: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to list teams: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }

@@ -1,4 +1,4 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, logger } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback } from '@elizaos/core';
 import { LinearService } from '../services/linear';
 
 export const getIssueAction: Action = {
@@ -49,7 +49,8 @@ export const getIssueAction: Action = {
     runtime: IAgentRuntime,
     message: Memory,
     _state?: State,
-    _options?: Record<string, unknown>
+    _options?: Record<string, unknown>,
+    callback?: HandlerCallback
   ): Promise<ActionResult> {
     try {
       const linearService = runtime.getService<LinearService>('linear');
@@ -59,8 +60,13 @@ export const getIssueAction: Action = {
       
       const content = message.content.text;
       if (!content) {
+        const errorMessage = 'Please specify an issue ID.';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please specify an issue ID.',
+          text: errorMessage,
           success: false
         };
       }
@@ -68,8 +74,13 @@ export const getIssueAction: Action = {
       // Extract issue ID from the message
       const issueMatch = content.match(/(\w+-\d+)/);
       if (!issueMatch) {
+        const errorMessage = 'Please provide a valid issue ID (e.g., ENG-123).';
+        await callback?.({
+          text: errorMessage,
+          source: message.content.source
+        });
         return {
-          text: 'Please provide a valid issue ID (e.g., ENG-123).',
+          text: errorMessage,
           success: false
         };
       }
@@ -123,7 +134,7 @@ export const getIssueAction: Action = {
       };
       
       // Format the response text
-      let responseText = `Issue ${issue.identifier}: ${issue.title}\n`;
+      let responseText = `📋 Issue ${issue.identifier}: ${issue.title}\n`;
       responseText += `Status: ${state?.name || 'Unknown'}\n`;
       responseText += `Priority: ${issue.priorityLabel}\n`;
       if (assignee) {
@@ -137,6 +148,12 @@ export const getIssueAction: Action = {
       }
       responseText += `\nView in Linear: ${issue.url}`;
       
+      // Send the formatted issue details to the channel
+      await callback?.({
+        text: responseText,
+        source: message.content.source
+      });
+      
       return {
         text: responseText,
         success: true,
@@ -144,8 +161,13 @@ export const getIssueAction: Action = {
       };
     } catch (error) {
       logger.error('Failed to get issue:', error);
+      const errorMessage = `❌ Failed to get issue: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      await callback?.({
+        text: errorMessage,
+        source: message.content.source
+      });
       return {
-        text: `Failed to get issue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        text: errorMessage,
         success: false
       };
     }
