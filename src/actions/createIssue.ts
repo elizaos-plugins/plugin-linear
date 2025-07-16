@@ -177,10 +177,29 @@ export const createIssueAction: Action = {
           
           // If no team was specified, use the first available team as default
           if (!issueData.teamId) {
-            const teams = await linearService.getTeams();
-            if (teams.length > 0) {
-              issueData.teamId = teams[0].id;
-              logger.warn(`No team specified, using default team: ${teams[0].name}`);
+            // Check for default team key from environment
+            const defaultTeamKey = runtime.getSetting('LINEAR_DEFAULT_TEAM_KEY') as string;
+            
+            if (defaultTeamKey) {
+              const teams = await linearService.getTeams();
+              const defaultTeam = teams.find(t => 
+                t.key.toLowerCase() === defaultTeamKey.toLowerCase()
+              );
+              if (defaultTeam) {
+                issueData.teamId = defaultTeam.id;
+                logger.info(`Using configured default team: ${defaultTeam.name} (${defaultTeam.key})`);
+              } else {
+                logger.warn(`Default team key ${defaultTeamKey} not found`);
+              }
+            }
+            
+            // If still no team, fall back to first available
+            if (!issueData.teamId) {
+              const teams = await linearService.getTeams();
+              if (teams.length > 0) {
+                issueData.teamId = teams[0].id;
+                logger.warn(`No team specified, using first available team: ${teams[0].name}`);
+              }
             }
           }
         } catch (parseError) {
@@ -192,10 +211,22 @@ export const createIssueAction: Action = {
           };
           
           // Ensure we have a teamId even in fallback case
+          const defaultTeamKey = runtime.getSetting('LINEAR_DEFAULT_TEAM_KEY') as string;
           const teams = await linearService.getTeams();
-          if (teams.length > 0) {
+          
+          if (defaultTeamKey) {
+            const defaultTeam = teams.find(t => 
+              t.key.toLowerCase() === defaultTeamKey.toLowerCase()
+            );
+            if (defaultTeam) {
+              issueData.teamId = defaultTeam.id;
+              logger.info(`Using configured default team for fallback: ${defaultTeam.name} (${defaultTeam.key})`);
+            }
+          }
+          
+          if (!issueData.teamId && teams.length > 0) {
             issueData.teamId = teams[0].id;
-            logger.warn(`Using default team for fallback: ${teams[0].name}`);
+            logger.warn(`Using first available team for fallback: ${teams[0].name}`);
           }
         }
       }

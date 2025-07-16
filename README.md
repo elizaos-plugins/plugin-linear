@@ -47,6 +47,7 @@ LINEAR_API_KEY=your_linear_api_key_here
 
 # Optional
 LINEAR_WORKSPACE_ID=your_workspace_id_here
+LINEAR_DEFAULT_TEAM_KEY=your_default_team_key_here  # e.g., ENG, ELIZA, COM2
 ```
 
 ## Usage
@@ -113,14 +114,24 @@ agent.registerPlugin(linearPlugin);
 
 #### Update Issue
 ```typescript
+// Natural language examples
+"Update issue ENG-123 title to 'Fix login button on all devices'"
+"Move issue COM2-7 to the ELIZA team"
+"Change the priority of BUG-456 to high and assign to john@example.com"
+"Update issue PROD-789 status to in-progress"
+
 // With options
 {
   action: "UPDATE_LINEAR_ISSUE",
   options: {
     issueId: "issue-id",
     title: "Updated title",
-    priority: 1,
-    stateId: "state-id"
+    description: "Updated description",
+    priority: 1,  // 1=urgent, 2=high, 3=normal, 4=low
+    teamId: "team-id",  // Move to different team
+    assigneeId: "user-id",
+    stateId: "state-id",
+    labelIds: ["label-id-1", "label-id-2"]
   }
 }
 ```
