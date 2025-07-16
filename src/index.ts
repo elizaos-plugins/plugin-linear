@@ -13,10 +13,10 @@ import { getActivityAction } from './actions/getActivity';
 import { clearActivityAction } from './actions/clearActivity';
 
 // Import all providers
-import { linearIssuesProvider } from './providers/issues';
-import { linearTeamsProvider } from './providers/teams';
-import { linearProjectsProvider } from './providers/projects';
-import { linearActivityProvider } from './providers/activity';
+// import { linearIssuesProvider } from './providers/issues';
+// import { linearTeamsProvider } from './providers/teams';
+// import { linearProjectsProvider } from './providers/projects';
+// import { linearActivityProvider } from './providers/activity';
 
 export const linearPlugin: Plugin = {
   name: '@elizaos/plugin-linear',
@@ -34,10 +34,10 @@ export const linearPlugin: Plugin = {
     clearActivityAction,
   ],
   providers: [
-    linearIssuesProvider,
-    linearTeamsProvider,
-    linearProjectsProvider,
-    linearActivityProvider,
+    // linearIssuesProvider,
+    // linearTeamsProvider,
+    // linearProjectsProvider,
+    // linearActivityProvider,
   ],
 };
 
