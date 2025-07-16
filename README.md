@@ -4,10 +4,20 @@ A comprehensive Linear integration plugin for ElizaOS that enables issue trackin
 
 ## Features
 
+### 🤖 Natural Language Understanding
+All actions now support advanced natural language parsing powered by LLM:
+- **Flexible References**: Reference issues by ID, title keywords, assignee, or recency
+- **Smart Filtering**: Use natural language for complex searches and filters
+- **Context Awareness**: Understands relative references like "my issues" or "today's activity"
+- **Graceful Fallbacks**: Falls back to pattern matching when LLM parsing fails
+
+## Core Features
+
 ### 📋 Issue Management
 - **Create Issues**: Create new issues with title, description, priority, assignees, and labels
 - **Get Issue Details**: Retrieve comprehensive information about specific issues
 - **Update Issues**: Modify existing issues with new information
+- **Delete Issues**: Archive issues (move to archived state)
 - **Search Issues**: Find issues using various filters and search criteria
 - **Add Comments**: Comment on existing issues
 
@@ -50,6 +60,20 @@ LINEAR_WORKSPACE_ID=your_workspace_id_here
 LINEAR_DEFAULT_TEAM_KEY=your_default_team_key_here  # e.g., ENG, ELIZA, COM2
 ```
 
+### Default Team Behavior
+
+When `LINEAR_DEFAULT_TEAM_KEY` is configured, it affects the following actions:
+
+- **Create Issue**: New issues will be assigned to the default team if no team is specified
+- **Search Issues**: Searches will be filtered by the default team unless:
+  - A team filter is explicitly provided
+  - The user asks for "all" issues
+- **List Projects**: Projects will be filtered by the default team unless:
+  - A specific team is mentioned
+  - The user asks for "all" projects
+
+This helps ensure that actions are scoped to the most relevant team by default while still allowing users to access all data when needed.
+
 ## Usage
 
 ### Register the Plugin
@@ -83,8 +107,11 @@ agent.registerPlugin(linearPlugin);
 
 #### Get Issue
 ```typescript
-// Natural language
-"Show me issue ENG-123"
+// Natural language examples
+"Show me issue ENG-123"  // Direct ID
+"What's the status of the login bug?"  // Search by title
+"Show me the latest high priority issue assigned to Sarah"  // Complex query
+"Get John's most recent task"  // Assignee + recency
 
 // With options
 {
@@ -98,7 +125,9 @@ agent.registerPlugin(linearPlugin);
 #### Search Issues
 ```typescript
 // Natural language
-"Show me all high priority bugs assigned to me"
+"Show me all high priority bugs assigned to me"  // Uses default team if configured
+"Show me all issues across all teams"  // Searches all teams
+"Show me issues in the ELIZA team"  // Searches specific team
 
 // With options
 {
@@ -107,6 +136,7 @@ agent.registerPlugin(linearPlugin);
     query: "bug",
     priority: [1, 2], // Urgent and High
     state: ["in-progress", "todo"],
+    team: "ELIZA",  // Override default team
     limit: 20
   }
 }
@@ -136,10 +166,31 @@ agent.registerPlugin(linearPlugin);
 }
 ```
 
-#### Add Comment
+#### Delete Issue
 ```typescript
 // Natural language
+"Delete issue ENG-123"
+"Remove COM2-7 from Linear"
+"Archive the bug report BUG-456"
+
+// With options
+{
+  action: "DELETE_LINEAR_ISSUE",
+  options: {
+    issueId: "issue-id-or-identifier"
+  }
+}
+```
+
+> **Note**: Linear doesn't support permanent deletion. This action archives the issue, moving it to an archived state where it won't appear in active views.
+
+#### Add Comment
+```typescript
+// Natural language examples
 "Comment on ENG-123: This has been fixed in the latest release"
+"Tell the login bug that we need more information from QA"
+"Reply to COM2-7: Thanks for the update"
+"Add a note to the payment issue saying it's blocked by API changes"
 
 // With options
 {
@@ -153,16 +204,21 @@ agent.registerPlugin(linearPlugin);
 
 #### List Teams
 ```typescript
-// Natural language
-"Show me all teams"
+// Natural language examples
+"Show me all teams"  // Lists all teams
+"Which engineering teams do we have?"  // Filter by name
+"Show me the teams I'm part of"  // Personal teams
+"Show me the ELIZA team details"  // Specific team lookup
 ```
 
 #### List Projects
 ```typescript
 // Natural language
-"Show me all projects"
+"Show me all projects"  // Uses default team filter if configured
+"Show me all projects across all teams"  // Lists all projects
+"Show me projects for the engineering team"  // Lists projects for specific team
 
-// Filter by team
+// With options
 {
   action: "LIST_LINEAR_PROJECTS",
   options: {
@@ -173,8 +229,12 @@ agent.registerPlugin(linearPlugin);
 
 #### Get Activity
 ```typescript
-// Natural language
-"Show me recent Linear activity"
+// Natural language examples
+"Show me recent Linear activity"  // All recent activity
+"What happened in Linear today?"  // Time-based filter
+"Show me what issues John created this week"  // User + action + time
+"Activity on ENG-123"  // Resource-specific activity
+"Show me failed operations"  // Filter by success status
 
 // With options
 {

@@ -222,16 +222,91 @@ export class LinearService extends Service {
     }
   }
   
+  async deleteIssue(issueId: string): Promise<void> {
+    try {
+      // In Linear, we archive issues rather than delete them
+      const archivePayload = await this.client.archiveIssue(issueId);
+      
+      const success = await archivePayload.success;
+      if (!success) {
+        throw new Error('Failed to archive issue');
+      }
+      
+      this.logActivity('delete_issue', 'issue', issueId, { action: 'archived' }, true);
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      this.logActivity('delete_issue', 'issue', issueId, { action: 'archive_failed' }, false, errorMessage);
+      throw new LinearAPIError(`Failed to archive issue: ${errorMessage}`);
+    }
+  }
+  
   async searchIssues(filters: LinearSearchFilters): Promise<Issue[]> {
     try {
+      // Build the filter object based on provided filters
+      let filterObject: any = {};
+      
+      // Add text search filter
+      if (filters.query) {
+        filterObject.or = [
+          { title: { containsIgnoreCase: filters.query } },
+          { description: { containsIgnoreCase: filters.query } },
+        ];
+      }
+      
+      // Add team filter
+      if (filters.team) {
+        // First try to find the team by key or name
+        const teams = await this.getTeams();
+        const team = teams.find(t => 
+          t.key.toLowerCase() === filters.team?.toLowerCase() ||
+          t.name.toLowerCase() === filters.team?.toLowerCase()
+        );
+        
+        if (team) {
+          filterObject.team = { id: { eq: team.id } };
+        }
+      }
+      
+      // Add assignee filter
+      if (filters.assignee && filters.assignee.length > 0) {
+        const users = await this.getUsers();
+        const assigneeIds = filters.assignee.map(assigneeName => {
+          const user = users.find(u => 
+            u.email === assigneeName || 
+            u.name.toLowerCase().includes(assigneeName.toLowerCase())
+          );
+          return user?.id;
+        }).filter(Boolean);
+        
+        if (assigneeIds.length > 0) {
+          filterObject.assignee = { id: { in: assigneeIds } };
+        }
+      }
+      
+      // Add priority filter
+      if (filters.priority && filters.priority.length > 0) {
+        filterObject.priority = { number: { in: filters.priority } };
+      }
+      
+      // Add state filter
+      if (filters.state && filters.state.length > 0) {
+        filterObject.state = { 
+          name: { in: filters.state }
+        };
+      }
+      
+      // Add label filter
+      if (filters.label && filters.label.length > 0) {
+        filterObject.labels = {
+          some: {
+            name: { in: filters.label }
+          }
+        };
+      }
+      
       const query = this.client.issues({
         first: filters.limit || 50,
-        filter: filters.query ? {
-          or: [
-            { title: { containsIgnoreCase: filters.query } },
-            { description: { containsIgnoreCase: filters.query } },
-          ],
-        } : undefined,
+        filter: Object.keys(filterObject).length > 0 ? filterObject : undefined,
       });
       
       const issues = await query;

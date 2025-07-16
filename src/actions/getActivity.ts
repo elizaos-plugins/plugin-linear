@@ -1,10 +1,39 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback, ModelType } from '@elizaos/core';
 import { LinearService } from '../services/linear';
+
+const getActivityTemplate = `Extract activity filter criteria from the user's request.
+
+User request: "{{userMessage}}"
+
+The user might ask for activity in various ways:
+- "Show me today's activity" → time range filter
+- "What issues were created?" → action type filter
+- "What did John do yesterday?" → user filter + time range
+- "Activity on ENG-123" → resource filter
+- "Recent comment activity" → action type + recency
+- "Failed operations this week" → success filter + time range
+
+Return ONLY a JSON object:
+{
+  "timeRange": {
+    "period": "today/yesterday/this-week/last-week/this-month",
+    "from": "ISO datetime if specific",
+    "to": "ISO datetime if specific"
+  },
+  "actionTypes": ["create_issue/update_issue/delete_issue/create_comment/search_issues/etc"],
+  "resourceTypes": ["issue/project/comment/team"],
+  "resourceId": "Specific resource ID if mentioned (e.g., ENG-123)",
+  "user": "User name or 'me' for current user",
+  "successFilter": "success/failed/all",
+  "limit": number (default 10)
+}
+
+Only include fields that are clearly mentioned.`;
 
 export const getActivityAction: Action = {
   name: 'GET_LINEAR_ACTIVITY',
-  description: 'Get recent Linear activity',
-  similes: ['get-linear-activity', 'show-linear-activity', 'view-linear-activity'],
+  description: 'Get recent Linear activity log with optional filters',
+  similes: ['get-linear-activity', 'show-linear-activity', 'view-linear-activity', 'check-linear-activity'],
   
   examples: [[
     {
@@ -16,7 +45,7 @@ export const getActivityAction: Action = {
     {
       name: 'Assistant',
       content: {
-        text: 'I\'ll check the recent Linear activity for you.',
+        text: 'I\'ll show you the recent Linear activity.',
         actions: ['GET_LINEAR_ACTIVITY']
       }
     }
@@ -24,13 +53,27 @@ export const getActivityAction: Action = {
     {
       name: 'User',
       content: {
-        text: 'What\'s been happening in Linear?'
+        text: 'What happened in Linear today?'
       }
     },
     {
       name: 'Assistant',
       content: {
-        text: 'Let me show you the recent Linear activity.',
+        text: 'Let me check today\'s Linear activity for you.',
+        actions: ['GET_LINEAR_ACTIVITY']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'Show me what issues John created this week'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll find the issues John created this week.',
         actions: ['GET_LINEAR_ACTIVITY']
       }
     }
@@ -58,10 +101,101 @@ export const getActivityAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      const activity = linearService.getActivityLog();
+      const content = message.content.text || '';
+      let filters: any = {};
+      let limit = 10;
+      
+      // Use LLM to parse filters if content is provided
+      if (content) {
+        const prompt = getActivityTemplate.replace('{{userMessage}}', content);
+        const response = await runtime.useModel(ModelType.TEXT_LARGE, {
+          prompt: prompt
+        });
+        
+        if (response) {
+          try {
+            const parsed = JSON.parse(response.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim());
+            
+            // Handle time range filtering
+            if (parsed.timeRange) {
+              const now = new Date();
+              let fromDate: Date | undefined;
+              
+              if (parsed.timeRange.from) {
+                fromDate = new Date(parsed.timeRange.from);
+              } else if (parsed.timeRange.period) {
+                switch (parsed.timeRange.period) {
+                  case 'today':
+                    fromDate = new Date(now.setHours(0, 0, 0, 0));
+                    break;
+                  case 'yesterday':
+                    fromDate = new Date(now.setDate(now.getDate() - 1));
+                    fromDate.setHours(0, 0, 0, 0);
+                    break;
+                  case 'this-week':
+                    fromDate = new Date(now.setDate(now.getDate() - now.getDay()));
+                    fromDate.setHours(0, 0, 0, 0);
+                    break;
+                  case 'last-week':
+                    fromDate = new Date(now.setDate(now.getDate() - now.getDay() - 7));
+                    fromDate.setHours(0, 0, 0, 0);
+                    break;
+                  case 'this-month':
+                    fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                    break;
+                }
+              }
+              
+              if (fromDate) {
+                filters.fromDate = fromDate.toISOString();
+              }
+            }
+            
+            // Handle action type filter
+            if (parsed.actionTypes && parsed.actionTypes.length > 0) {
+              filters.action = parsed.actionTypes[0]; // Service currently supports single action
+            }
+            
+            // Handle resource type filter
+            if (parsed.resourceTypes && parsed.resourceTypes.length > 0) {
+              filters.resource_type = parsed.resourceTypes[0];
+            }
+            
+            // Handle resource ID filter
+            if (parsed.resourceId) {
+              filters.resource_id = parsed.resourceId;
+            }
+            
+            // Handle success filter
+            if (parsed.successFilter && parsed.successFilter !== 'all') {
+              filters.success = parsed.successFilter === 'success';
+            }
+            
+            // Set limit
+            limit = parsed.limit || 10;
+            
+          } catch (parseError) {
+            logger.warn('Failed to parse activity filters:', parseError);
+          }
+        }
+      }
+      
+      // Get filtered activity
+      let activity = linearService.getActivityLog(limit * 2, filters); // Get more to filter client-side
+      
+      // Additional client-side filtering for time range
+      if (filters.fromDate) {
+        const fromTime = new Date(filters.fromDate).getTime();
+        activity = activity.filter(item => new Date(item.timestamp).getTime() >= fromTime);
+      }
+      
+      // Limit results
+      activity = activity.slice(0, limit);
       
       if (activity.length === 0) {
-        const noActivityMessage = 'No recent Linear activity found.';
+        const noActivityMessage = filters.fromDate 
+          ? `No Linear activity found for the specified filters.`
+          : 'No recent Linear activity found.';
         await callback?.({
           text: noActivityMessage,
           source: message.content.source
@@ -76,30 +210,40 @@ export const getActivityAction: Action = {
       }
       
       const activityText = activity
-        .slice(0, 10) // Show last 10 activities
         .map((item, index) => {
-          const description = `${item.action} ${item.resource_type} ${item.resource_id}${item.error ? ` (failed: ${item.error})` : ''}`;
-          return `${index + 1}. ${description}`;
+          const time = new Date(item.timestamp).toLocaleString();
+          const status = item.success ? '✅' : '❌';
+          const details = Object.entries(item.details)
+            .filter(([key]) => key !== 'filters') // Don't show filter details
+            .map(([key, value]) => `${key}: ${JSON.stringify(value)}`)
+            .join(', ');
+          
+          return `${index + 1}. ${status} ${item.action} on ${item.resource_type} ${item.resource_id}\n   Time: ${time}\n   ${details ? `Details: ${details}` : ''}${item.error ? `\n   Error: ${item.error}` : ''}`;
         })
-        .join('\n');
+        .join('\n\n');
       
-      const resultMessage = `📊 Recent Linear activity:\n${activityText}`;
+      const headerText = filters.fromDate 
+        ? `📊 Linear activity ${content}:`
+        : '📊 Recent Linear activity:';
+      
+      const resultMessage = `${headerText}\n\n${activityText}`;
       await callback?.({
         text: resultMessage,
         source: message.content.source
       });
       
       return {
-        text: `Recent Linear activity:\n${activityText}`,
+        text: `Found ${activity.length} activity item${activity.length === 1 ? '' : 's'}`,
         success: true,
         data: {
-          activity: activity.slice(0, 10),
+          activity,
+          filters,
           count: activity.length
         }
       };
     } catch (error) {
-      logger.error('Failed to get Linear activity:', error);
-      const errorMessage = `❌ Failed to get Linear activity: ${error instanceof Error ? error.message : 'Unknown error'}`;
+      logger.error('Failed to get activity:', error);
+      const errorMessage = `❌ Failed to get activity: ${error instanceof Error ? error.message : 'Unknown error'}`;
       await callback?.({
         text: errorMessage,
         source: message.content.source

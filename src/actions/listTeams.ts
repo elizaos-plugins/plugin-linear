@@ -1,10 +1,34 @@
-import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback } from '@elizaos/core';
+import { Action, ActionResult, IAgentRuntime, Memory, State, logger, HandlerCallback, ModelType } from '@elizaos/core';
 import { LinearService } from '../services/linear';
+
+const listTeamsTemplate = `Extract team filter criteria from the user's request.
+
+User request: "{{userMessage}}"
+
+The user might ask for teams in various ways:
+- "Show me all teams" → list all teams
+- "Engineering teams" → filter by teams with engineering in name/description
+- "List teams I'm part of" → filter by membership
+- "Which teams work on the mobile app?" → filter by description/focus
+- "Show me the ELIZA team details" → specific team lookup
+- "Active teams" → teams with recent activity
+- "Frontend and backend teams" → multiple team types
+
+Return ONLY a JSON object:
+{
+  "nameFilter": "Keywords to search in team names",
+  "specificTeam": "Specific team name or key if looking for one team",
+  "myTeams": true/false (true if user wants their teams),
+  "showAll": true/false (true if user explicitly asks for "all"),
+  "includeDetails": true/false (true if user wants detailed info)
+}
+
+Only include fields that are clearly mentioned.`;
 
 export const listTeamsAction: Action = {
   name: 'LIST_LINEAR_TEAMS',
-  description: 'List all teams in Linear',
-  similes: ['list-linear-teams', 'show-linear-teams', 'get-linear-teams'],
+  description: 'List teams in Linear with optional filters',
+  similes: ['list-linear-teams', 'show-linear-teams', 'get-linear-teams', 'view-linear-teams'],
   
   examples: [[
     {
@@ -24,13 +48,27 @@ export const listTeamsAction: Action = {
     {
       name: 'User',
       content: {
-        text: 'What teams are available?'
+        text: 'Which engineering teams do we have?'
       }
     },
     {
       name: 'Assistant',
       content: {
-        text: 'Let me show you all the available teams.',
+        text: 'Let me find the engineering teams for you.',
+        actions: ['LIST_LINEAR_TEAMS']
+      }
+    }
+  ], [
+    {
+      name: 'User',
+      content: {
+        text: 'Show me the teams I\'m part of'
+      }
+    },
+    {
+      name: 'Assistant',
+      content: {
+        text: 'I\'ll show you the teams you\'re a member of.',
         actions: ['LIST_LINEAR_TEAMS']
       }
     }
@@ -58,10 +96,70 @@ export const listTeamsAction: Action = {
         throw new Error('Linear service not available');
       }
       
-      const teams = await linearService.getTeams();
+      const content = message.content.text || '';
+      let nameFilter: string | undefined;
+      let specificTeam: string | undefined;
+      let myTeams = false;
+      let includeDetails = false;
+      
+      // Use LLM to parse the request
+      if (content) {
+        const prompt = listTeamsTemplate.replace('{{userMessage}}', content);
+        const response = await runtime.useModel(ModelType.TEXT_LARGE, {
+          prompt: prompt
+        });
+        
+        if (response) {
+          try {
+            const parsed = JSON.parse(response.replace(/^```(?:json)?\n?/,'').replace(/\n?```$/,'').trim());
+            
+            nameFilter = parsed.nameFilter;
+            specificTeam = parsed.specificTeam;
+            myTeams = parsed.myTeams === true;
+            includeDetails = parsed.includeDetails === true;
+            
+          } catch (parseError) {
+            logger.warn('Failed to parse team filters:', parseError);
+          }
+        }
+      }
+      
+      let teams = await linearService.getTeams();
+      
+      // Filter for specific team
+      if (specificTeam) {
+        teams = teams.filter(team => 
+          team.key.toLowerCase() === specificTeam.toLowerCase() ||
+          team.name.toLowerCase() === specificTeam.toLowerCase()
+        );
+      }
+      
+      // Filter by name keywords
+      if (nameFilter && !specificTeam) {
+        const keywords = nameFilter.toLowerCase().split(/\s+/);
+        teams = teams.filter(team => {
+          const teamText = `${team.name} ${team.description || ''}`.toLowerCase();
+          return keywords.some(keyword => teamText.includes(keyword));
+        });
+      }
+      
+      // Filter for user's teams if requested
+      if (myTeams) {
+        try {
+          const currentUser = await linearService.getCurrentUser();
+          // This would require fetching team membership - simplified for now
+          logger.info('Team membership filtering not yet implemented');
+        } catch {
+          logger.warn('Could not get current user for team filtering');
+        }
+      }
       
       if (teams.length === 0) {
-        const noTeamsMessage = 'No teams found in Linear.';
+        const noTeamsMessage = specificTeam 
+          ? `No team found matching "${specificTeam}".`
+          : nameFilter 
+            ? `No teams found matching "${nameFilter}".`
+            : 'No teams found in Linear.';
         await callback?.({
           text: noTeamsMessage,
           source: message.content.source
@@ -75,27 +173,72 @@ export const listTeamsAction: Action = {
         };
       }
       
-      const teamList = teams.map((team, index) => 
-        `${index + 1}. ${team.name} (${team.key})${team.description ? ` - ${team.description}` : ''}`
-      ).join('\n');
+      // Get additional details if requested or showing specific team
+      let teamsWithDetails: any[] = teams;
+      if (includeDetails || specificTeam) {
+        teamsWithDetails = await Promise.all(teams.map(async (team) => {
+          const membersQuery = await team.members();
+          const members = await membersQuery.nodes;
+          const projectsQuery = await team.projects();
+          const projects = await projectsQuery.nodes;
+          
+          return {
+            ...team,
+            memberCount: members.length,
+            projectCount: projects.length,
+            membersList: specificTeam ? members.slice(0, 5) : [] // Include member details for specific team
+          };
+        }));
+      }
       
-      const resultMessage = `👥 Found ${teams.length} team${teams.length === 1 ? '' : 's'}:\n${teamList}`;
+      const teamList = teamsWithDetails.map((team: any, index) => {
+        let info = `${index + 1}. ${team.name} (${team.key})`;
+        
+        if (team.description) {
+          info += `\n   ${team.description}`;
+        }
+        
+        if (includeDetails || specificTeam) {
+          info += `\n   Members: ${team.memberCount} | Projects: ${team.projectCount}`;
+          
+          if (specificTeam && team.membersList.length > 0) {
+            const memberNames = team.membersList.map((m: any) => m.name).join(', ');
+            info += `\n   Team members: ${memberNames}${team.memberCount > 5 ? ' ...' : ''}`;
+          }
+        }
+        
+        return info;
+      }).join('\n\n');
+      
+      const headerText = specificTeam && teams.length === 1
+        ? `📋 Team Details:`
+        : nameFilter 
+          ? `📋 Found ${teams.length} team${teams.length === 1 ? '' : 's'} matching "${nameFilter}":`
+          : `📋 Found ${teams.length} team${teams.length === 1 ? '' : 's'}:`;
+      
+      const resultMessage = `${headerText}\n\n${teamList}`;
       await callback?.({
         text: resultMessage,
         source: message.content.source
       });
       
       return {
-        text: `Found ${teams.length} team${teams.length === 1 ? '' : 's'}:\n${teamList}`,
+        text: `Found ${teams.length} team${teams.length === 1 ? '' : 's'}`,
         success: true,
         data: {
-          teams: teams.map(t => ({
+          teams: teamsWithDetails.map((t: any) => ({
             id: t.id,
             name: t.name,
             key: t.key,
-            description: t.description
+            description: t.description,
+            memberCount: t.memberCount,
+            projectCount: t.projectCount
           })),
-          count: teams.length
+          count: teams.length,
+          filters: {
+            name: nameFilter,
+            specific: specificTeam
+          }
         }
       };
     } catch (error) {

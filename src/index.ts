@@ -5,6 +5,7 @@ import { LinearService } from './services/linear';
 import { createIssueAction } from './actions/createIssue';
 import { getIssueAction } from './actions/getIssue';
 import { updateIssueAction } from './actions/updateIssue';
+import { deleteIssueAction } from './actions/deleteIssue';
 import { searchIssuesAction } from './actions/searchIssues';
 import { createCommentAction } from './actions/createComment';
 import { listTeamsAction } from './actions/listTeams';
@@ -26,6 +27,7 @@ export const linearPlugin: Plugin = {
     createIssueAction,
     getIssueAction,
     updateIssueAction,
+    deleteIssueAction,
     searchIssuesAction,
     createCommentAction,
     listTeamsAction,
