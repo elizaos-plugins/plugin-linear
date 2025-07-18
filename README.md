@@ -353,7 +353,7 @@ npm run build
 
 ### Testing
 ```bash
-npm run test
+bun run test
 ```
 
 ### Linting
