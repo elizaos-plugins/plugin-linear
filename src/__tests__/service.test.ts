@@ -9,7 +9,7 @@ describe('LinearService', () => {
   let mockRuntime: any;
   let service: LinearService;
 
-  beforeEach(async () => {
+  beforeEach(() => {
     // Create a mock runtime for each test
     mockRuntime = {
       getSetting: (key: string) => {
